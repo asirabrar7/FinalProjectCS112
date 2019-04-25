@@ -1,0 +1,121 @@
+library(MatchIt)
+library(Zelig)
+library(rbounds)
+library(Matching)
+library(rgenoud)
+
+set.seed(7998)
+
+load("D:/Academics/Sophomore/CS112/Final Project/datamatch.Rdata")
+
+outcomes <- datamatch[10:18]
+
+outcomevarnames <- names(outcomes)
+
+datamatch[, 10:18][is.na(datamatch[, 10:18]) == "TRUE"] <- 99999
+
+datamatch <- na.omit(datamatch)
+
+
+#__________________________ Table 3, pre-matching __________________________#
+
+
+datamatch[datamatch == 99999] <- NA
+
+outcomes <- datamatch[10:18]
+
+tab3.pre <- matrix(NA,nrow = 9,ncol = 5)
+rownames(tab3.pre) <- outcomevarnames
+colnames(tab3.pre) <- c("N", "ev/100", "tv/100", "diff", "p-value")
+
+for (i in 1:9) {
+  tab3.pre[i, 1] <- length(na.omit(outcomes[, i]))
+  tab3.pre[i, 2:3] <- rev(prop.table(table(outcomes[,i],datamatch$EV),2)[2,])*100
+  tab3.pre[i, 4] <- tab3.pre[i, 2] - tab3.pre[i, 3]	
+  tab3.pre[i, 5] <- prop.test(table(outcomes[, i], datamatch$EV)[2, ], n = apply(table(outcomes[, i], datamatch$EV), 2, sum))$p.value
+}
+
+datamatch[, 10:18][is.na(datamatch[, 10:18]) == "TRUE"] <- 99999
+
+#________________Propensity score matching (with MatchIt) _________________#
+
+mout <- matchit(EV ~ age.group + I(age.group^2) + I(age.group^3) + age.group:educ + age.group:tech + educ + I(educ^2) + tech + I(tech^2) + pol.info + educ:pol.info + age.group:pol.info + tech:pol.info + white.collar + not.full.time + male, caliper = 0.05, data = datamatch, method = "nearest", verbose = "TRUE")
+
+#save(mout, file = "m.out.Rdata")
+
+datamatched <- match.data(mout)
+datamatched[datamatched == 99999] <- NA
+
+#save(datamatched, file = "datamatched.Rdata")
+
+
+#________________Matching using GenMatch______________________________#
+
+
+X <- cbind(datamatch$age.group, datamatch$educ, datamatch$tech, datamatch$pol.info, datamatch$white.collar, datamatch$not.full.time, datamatch$male)
+
+genout2 <- GenMatch(Tr=EV$EV, X=X, estimand = "ATT", pop.size=200, max.generations=30, 
+                    wait.generations=25)
+min_p_vals <- rep(0,9)
+for(i in 10:18){
+  
+  mout2g <- Match(Tr=EV$EV ,Weight.matrix = genout2, X = X , Y = datamatch[,i], 
+                  estimand = "ATT", M=1, BiasAdjust = TRUE)
+  
+  mb2g  <- MatchBalance(EV ~ age.group + I(age.group^2) + I(age.group^3) + age.group:educ + age.group:tech + educ + I(educ^2) + tech + I(tech^2) + pol.info + educ:pol.info + age.group:pol.info + tech:pol.info + white.collar + not.full.time + male, data = datamatch, match.out = mout2g, nboots=500)
+  min_p_vals[i-9] <- mb2g$AMsmallest.p.value
+}
+
+datagenmatched <- datamatch[c(mout2g$index.treated,mout2g$index.control),]
+
+datagenmatched[datagenmatched == 99999] <- NA
+
+#save(datagenmatched, file = "datagenmatched.Rdata")
+
+#__________________________ Table 3, post-matching _________________________#
+
+outcomes.post <- datamatched[10:18]
+
+tab3.post <- matrix(NA, nrow = 9, ncol = 5)
+rownames(tab3.post) <- outcomevarnames
+colnames(tab3.post) <- c("N", "ev/100", "tv/100", "diff", "pvalue")
+
+for (i in 1:9) {
+  tab3.post[i, 1] <- length(na.omit(outcomes.post[, i]))
+  tab3.post[i, 2:3] <- rev(prop.table(table(outcomes.post[, i], datamatched$EV), 2)[2, ]) * 100
+  tab3.post[i, 4] <- tab3.post[i, 2] - tab3.post[i, 3]	
+  tab3.post[i, 5] <- prop.test(table(outcomes.post[, i], datamatched$EV)[2, ], n = apply(table(outcomes.post[, i], datamatched$EV), 2, sum))$p.value
+}
+
+tab3 <- cbind(tab3.pre, tab3.post)
+
+tab3 <- tab3[rev(order(tab3[, 9])), ]
+
+
+
+#__________________________ Table 3, post-GENmatching _________________________#
+
+outcomes.postgen <- datagenmatched[10:18]
+
+tab3.postgen <- matrix(NA, nrow = 9, ncol = 5)
+rownames(tab3.postgen) <- outcomevarnames
+colnames(tab3.postgen) <- c("N", "ev/100", "tv/100", "diff", "pvalue")
+
+for (i in 1:9) {
+  tab3.postgen[i, 1] <- length(na.omit(outcomes.postgen[, i]))
+  tab3.postgen[i, 2:3] <- rev(prop.table(table(outcomes.postgen[, i], datagenmatched$EV), 2)[2, ]) * 100
+  tab3.postgen[i, 4] <- tab3.postgen[i, 2] - tab3.postgen[i, 3]	
+  tab3.postgen[i, 5] <- prop.test(table(outcomes.postgen[, i], datagenmatched$EV)[2, ], n = apply(table(outcomes.postgen[, i], datagenmatched$EV), 2, sum))$p.value
+}
+
+tab3 <- cbind(tab3.pre, tab3.post, tab3.postgen)
+
+tab3 <- tab3[rev(order(tab3[, 9])), ]
+
+
+#Table 3:
+print(tab3, digits = 4)
+
+
+
+
